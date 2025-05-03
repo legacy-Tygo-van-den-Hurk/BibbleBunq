@@ -24,7 +24,8 @@ def process_city():
     if not city:
         return jsonify({"error": "City parameter is required!"}), 400
 
-    # Step 1: Process the city data using the Langchain agent
+    # Step 1: gets data about the city
+    
     city = city.lower()
     processed_data = process_city_data(city)
 
