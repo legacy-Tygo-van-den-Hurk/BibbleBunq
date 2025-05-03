@@ -19,11 +19,13 @@ from typing import List, Any, Optional
 def process_city():
     # Get the city from the incoming request
     city = request.json.get('city')
+    print(f"Received city: {city}")
     
     if not city:
         return jsonify({"error": "City parameter is required!"}), 400
 
     # Step 1: Process the city data using the Langchain agent
+    city = city.lower()
     processed_data = process_city_data(city)
 
     json_str = json.dumps(processed_data, indent=4)
