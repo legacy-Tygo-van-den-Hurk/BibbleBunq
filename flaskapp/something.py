@@ -1,5 +1,3 @@
-# file: my_llm_function.py
-
 import json
 import pandas as pd
 import re
