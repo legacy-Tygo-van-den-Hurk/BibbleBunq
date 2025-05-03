@@ -1,4 +1,4 @@
-# Bibble Safety Intelligence UI – README
+# Bibble AI Agent – README
 
 ## 🤖 About Bibble the AI Agent
 **Bibble** is an AI agent designed to serve as a smart city companion for Bunq users. It provides context-aware, real-time intelligence about neighborhood safety and social atmosphere using a blend of external APIs, scraped city data, emoji reaction analytics, and LLM-powered summaries. Built as a modular AI system, Bibble is capable of adapting its behavior based on city-specific information and external data availability.
