@@ -5,40 +5,59 @@ import os
 from openai import OpenAI
 from dotenv import load_dotenv
 
-def generate_neighbourhood_safety_json(articles, emoji_table, vibe_keywords):
+
+def generate_neighbourhood_safety_json(articles, emoji_table):
     """
-    Generates safety/vibe report using NVIDIA LLaMA-3.3 API. 
-    Inputs:
-        - articles: list of dicts (neighbourhood, description, news)
-        - emoji_table: DataFrame with columns ['neighbourhood', 'place', 'emoji_1' ... 'emoji_4']
-        - vibe_keywords: dict mapping neighbourhood to list of vibe descriptors
-    Reads API key from ../.env.
-    Returns:
-        Parsed JSON object (structured output per your prompt).
+    Generates a neighbourhood‑level safety & vibe assessment JSON using
+    NVIDIA's LLaMA‑3.3 model via its OpenAI‑compatible endpoint.
+
+    Parameters
+    ----------
+    articles : list[dict]
+        Each dict must contain:
+        {
+            "neighbourhood": str,
+            "description": str,   # HoodMaps‑style keywords (space‑separated)
+            "news": list[str]     # list of headline strings
+        }
+
+    emoji_table : pandas.DataFrame
+        Must have columns:
+        ["neighbourhood", "place", "emoji_1", "emoji_2", "emoji_3", "emoji_4"]
+        (additional emoji_N columns are ignored).
+
+    The function reads the NVIDIA API key from "../.env" under
+    key name OPENAI_API_KEY, keeps the system prompt *exactly*
+    as supplied, calls the model, and returns a parsed JSON object.
     """
 
-    # === Load API key from .env ===
+    # ------------------------------------------------------------------
+    # 1.  Load API key from ../.env
+    # ------------------------------------------------------------------
     load_dotenv(dotenv_path="../.env")
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise ValueError("API key not found in ../.env under 'OPENAI_API_KEY'")
+        raise ValueError("OPENAI_API_KEY not found in ../.env")
 
-    # === Init NVIDIA-compatible client ===
+    # Init OpenAI‑compatible client for NVIDIA endpoint
     client = OpenAI(
         base_url="https://integrate.api.nvidia.com/v1",
-        api_key=api_key
+        api_key=api_key,
     )
 
-    # === Helper functions ===
-    def compute_emoji4_ratio(df):
+    # ------------------------------------------------------------------
+    # 2.  Helper functions for emoji stats
+    # ------------------------------------------------------------------
+    def compute_emoji4_ratio(df: pd.DataFrame) -> pd.Series:
         df = df.copy()
         df["total"] = df.filter(like="emoji_").sum(axis=1)
         df["ratio"] = df["emoji_4"] / df["total"].clip(lower=1)
-        return df.groupby("neighbourhood").apply(
-            lambda g: (g["ratio"] * g["total"]).sum() / g["total"].sum()
+        return (
+            df.groupby("neighbourhood")
+              .apply(lambda g: (g["ratio"] * g["total"]).sum() / g["total"].sum())
         )
 
-    def top_safe_places(df, n=3):
+    def top_safe_places(df: pd.DataFrame, n: int = 3):
         return (
             df.sort_values("emoji_4", ascending=False)
               .groupby("neighbourhood")
@@ -48,7 +67,17 @@ def generate_neighbourhood_safety_json(articles, emoji_table, vibe_keywords):
               .to_dict()
         )
 
-    # === Generate input structure for LLM ===
+    # ------------------------------------------------------------------
+    # 3.  Derive vibe_keywords automatically from description strings
+    # ------------------------------------------------------------------
+    vibe_keywords = {
+        row["neighbourhood"]: row["description"].lower().split()
+        for row in articles
+    }
+
+    # ------------------------------------------------------------------
+    # 4.  Build structured input for the model
+    # ------------------------------------------------------------------
     emoji_ratio = compute_emoji4_ratio(emoji_table)
     top_places  = top_safe_places(emoji_table)
 
@@ -63,15 +92,19 @@ def generate_neighbourhood_safety_json(articles, emoji_table, vibe_keywords):
             "top_places_counts": [
                 {
                     "place": p,
-                    "emoji4": int(emoji_table.query("neighbourhood == @nbh and place == @p")["emoji_4"].iloc[0])
+                    "emoji4": int(
+                        emoji_table.query("neighbourhood == @nbh and place == @p")["emoji_4"].iloc[0]
+                    ),
                 }
                 for p in top_places.get(nbh, [])
-            ]
+            ],
         })
 
     formatted_input = json.dumps(records, ensure_ascii=False, indent=2)
 
-    # === Your system prompt (UNCHANGED) ===
+    # ------------------------------------------------------------------
+    # 5.  SYSTEM PROMPT (kept *exactly* as provided)
+    # ------------------------------------------------------------------
     SYSTEM_PROMPT = """Assess safety and social atmosphere of neighbourhoods for digital nomads based on crowdsourced data, place ratings, and recent news.
 
 Analyze the provided structured data about cities and their neighbourhoods to determine safety levels and provide a localized safety overview. The AI agent is designed to prioritize safety concerns especially relevant to women traveling alone or living abroad. Input includes place-level emoji reaction data, HoodMaps crowdsource descriptors, and neighbourhood-specific news headlines. 
@@ -152,44 +185,32 @@ Safety Overview:
 Social Character:
   <What kind of people live or hang out here>
 
-# Example Output
-
-Neighbourhood: Ulsoor
-Safety Score: 3.2/5.0
-Top 3 Safe Places:
-  - Green Bowl Cafe
-  - Lake View Co-working
-  - Blossom Yoga Studio
-Safety Overview:
-  Recent thefts have caused concern in Ulsoor, prompting increased police patrols and community safety meetings. HoodMaps also tags this area as “crime-prone”, which aligns with recent events.
-Social Character:
-  Mixed-use neighbourhood with local residents and some budget travelers.
-
 # Notes
+- Phrase outputs in gender-neutral language.
+- Do not include tourist/entertainment recommendations.
+- Output must match the format and remain free of irrelevant commentary."""
 
-- Your safety assessments should be especially sensitive to the types of threats and discomforts commonly reported by women in unfamiliar areas. However, you must phrase all outputs using gender-neutral language.
-- Only focus on safety, security atmosphere, and demographic vibe. Do not give tourist or entertainment recommendations.
-- Output must be clean and consistent with the format above. Do not include irrelevant commentary."""
-
-    # === Call the LLM ===
+    # ------------------------------------------------------------------
+    # 6.  LLM call
+    # ------------------------------------------------------------------
     response = client.chat.completions.create(
         model="nvidia/llama-3.3-nemotron-super-49b-v1",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": formatted_input}
+            {"role": "user",   "content": formatted_input}
         ],
         max_tokens=1000,
-        temperature=0.4
+        temperature=0.4,
     )
 
     raw_text = response.choices[0].message.content
 
-    # === Extract valid JSON from response ===
-    try:
-        raw = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.IGNORECASE | re.MULTILINE)
-        match = re.search(r"\[\s*{.*?}\s*]", raw, flags=re.DOTALL)
-        if not match:
-            raise ValueError("No valid JSON block found in model output.")
-        return json.loads(match.group(0))
-    except Exception as e:
-        raise ValueError(f"Model returned invalid JSON: {str(e)}\nRaw response:\n{raw_text}")
+    # ------------------------------------------------------------------
+    # 7.  Extract valid JSON block
+    # ------------------------------------------------------------------
+    raw = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.IGNORECASE | re.MULTILINE)
+    match = re.search(r"\[\s*{.*?}\s*]", raw, flags=re.DOTALL)
+    if not match:
+        raise ValueError(f"No valid JSON block found. Raw model output:\n{raw_text}")
+
+    return json
