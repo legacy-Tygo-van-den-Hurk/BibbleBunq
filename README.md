@@ -86,22 +86,6 @@ The frontend receives (or mocks) this JSON and renders it using a paginated `Scr
 - Top places
 - Color-coded styling for readability
 
----
-
-## 📁 File Structure
-```bash
-frontend/
-  └── app/
-      ├── (tabs)/travel.tsx    # Sends request, triggers AI
-      ├── safety.tsx           # Renders final AI JSON data
-      └── tabs.js              # Navigation layout
-backend/
-  ├── main.py                 # Flask app and routes
-  ├── process_city_data.py    # Web scraping + news
-  ├── my_llm_function.py      # Calls NVIDIA LLaMA-3.3
-  └── generate_data.py        # Fake emoji ratings
-.env                          # Stores NVIDIA API key
-```
 
 ---
 
