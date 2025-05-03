@@ -1,211 +1,197 @@
-"""
-Neighbourhood Safety & Social Atmosphere Assessment
---------------------------------------------------
-A tidy, script‑style refactor of the original Colab notebook.  
-Run it with `python safety_analysis.py` (after placing a `.env` file with
-`NVIDIA_API_KEY=<your‑key>` in the same directory or exporting the env var).
-"""
-from __future__ import annotations
+# file: my_llm_function.py
 
 import json
-import os
-import textwrap
-from pathlib import Path
-from typing import Any, Dict, List
-
 import pandas as pd
-from dotenv import find_dotenv, load_dotenv
+import re
+import os
 from openai import OpenAI
+from dotenv import load_dotenv
 
-###############################################################################
-# Configuration
-###############################################################################
+def generate_neighbourhood_safety_json(articles, emoji_table, vibe_keywords):
+    """
+    Generates safety/vibe report using NVIDIA LLaMA-3.3 API. 
+    Inputs:
+        - articles: list of dicts (neighbourhood, description, news)
+        - emoji_table: DataFrame with columns ['neighbourhood', 'place', 'emoji_1' ... 'emoji_4']
+        - vibe_keywords: dict mapping neighbourhood to list of vibe descriptors
+    Reads API key from ../.env.
+    Returns:
+        Parsed JSON object (structured output per your prompt).
+    """
 
-MODEL_NAME: str = "nvidia/llama-3.3-nemotron-super-49b-v1"
-API_BASE_URL: str = "https://integrate.api.nvidia.com/v1"
-API_KEY_ENV: str = "NVIDIA_API_KEY"
+    # === Load API key from .env ===
+    load_dotenv(dotenv_path="../.env")
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("API key not found in ../.env under 'OPENAI_API_KEY'")
 
-# System prompt used for the chat completion
-SYSTEM_PROMPT: str = """
-Assess safety and social atmosphere of neighbourhoods for digital nomads based 
-on crowdsourced data, place ratings, and recent news.
+    # === Init NVIDIA-compatible client ===
+    client = OpenAI(
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key=api_key
+    )
 
-[Shortened for brevity … keep the full prompt text from the original here.]
-""".strip()
+    # === Helper functions ===
+    def compute_emoji4_ratio(df):
+        df = df.copy()
+        df["total"] = df.filter(like="emoji_").sum(axis=1)
+        df["ratio"] = df["emoji_4"] / df["total"].clip(lower=1)
+        return df.groupby("neighbourhood").apply(
+            lambda g: (g["ratio"] * g["total"]).sum() / g["total"].sum()
+        )
 
-###############################################################################
-# Data definitions (in lieu of external files / API calls)
-###############################################################################
+    def top_safe_places(df, n=3):
+        return (
+            df.sort_values("emoji_4", ascending=False)
+              .groupby("neighbourhood")
+              .head(n)
+              .groupby("neighbourhood")["place"]
+              .apply(list)
+              .to_dict()
+        )
 
-ARTICLES: List[Dict[str, Any]] = [
+    # === Generate input structure for LLM ===
+    emoji_ratio = compute_emoji4_ratio(emoji_table)
+    top_places  = top_safe_places(emoji_table)
+
+    records = []
+    for row in articles:
+        nbh = row["neighbourhood"]
+        records.append({
+            "neighbourhood": nbh,
+            "emoji4_ratio": round(float(emoji_ratio.get(nbh, 0)), 4),
+            "vibe_keywords": vibe_keywords.get(nbh, []),
+            "news": row["news"],
+            "top_places_counts": [
+                {
+                    "place": p,
+                    "emoji4": int(emoji_table.query("neighbourhood == @nbh and place == @p")["emoji_4"].iloc[0])
+                }
+                for p in top_places.get(nbh, [])
+            ]
+        })
+
+    formatted_input = json.dumps(records, ensure_ascii=False, indent=2)
+
+    # === Your system prompt (UNCHANGED) ===
+    SYSTEM_PROMPT = """Assess safety and social atmosphere of neighbourhoods for digital nomads based on crowdsourced data, place ratings, and recent news.
+
+Analyze the provided structured data about cities and their neighbourhoods to determine safety levels and provide a localized safety overview. The AI agent is designed to prioritize safety concerns especially relevant to women traveling alone or living abroad. Input includes place-level emoji reaction data, HoodMaps crowdsource descriptors, and neighbourhood-specific news headlines. 
+
+While the safety assessment is tailored to concerns commonly experienced by women (e.g., harassment risk, walkability at night, public transportation safety, and local crime rates), the user of this information may be of any gender. Therefore, all communication and outputs must be phrased in a neutral tone—avoiding gendered language—so it is inclusive and informative to all users.
+# Input Format
+
+You will receive structured data in the following format:
+
+1. Neighbourhood Data
+[
     {
         "neighbourhood": "Ulsoor",
         "description": "crime",
         "news": [
             "Karnataka Police increase patrols in Ulsoor after spike in thefts",
-            "Community meeting held to discuss safety measures in Ulsoor",
-        ],
+            "Community meeting held to discuss safety measures in Ulsoor"
+        ]
     },
     {
         "neighbourhood": "Indiranagar",
         "description": "techies",
-        "news": [
-            "Indiranagar praised for late-night walkability upgrades",
-            "Residents celebrate new metro link improving safety",
-        ],
-    },
-    {
-        "neighbourhood": "Koramangala",
-        "description": "students party",
-        "news": [
-            "Koramangala nightlife draws crowds; minor scuffles reported",
-            "Police launch night patrol initiative after noise complaints",
-        ],
-    },
+        "news": [ ... ]
+    }
 ]
 
-EMOJI_TABLE: pd.DataFrame = pd.DataFrame(
-    [
-        # nbh, place,  e1  e2  e3  e4
-        ("Ulsoor", "Green Bowl Cafe", 3, 2, 10, 45),
-        ("Ulsoor", "Lake View Co‑working", 1, 1, 5, 32),
-        ("Ulsoor", "Blossom Yoga Studio", 0, 1, 2, 21),
-        ("Indiranagar", "Cup & Code Café", 1, 0, 4, 60),
-        ("Indiranagar", "Metro Park", 2, 1, 3, 55),
-        ("Indiranagar", "Silicon Lounge", 0, 0, 2, 48),
-        ("Koramangala", "Night Owl Bar", 4, 6, 15, 20),
-        ("Koramangala", "StudyHub Library", 0, 0, 1, 25),
-        ("Koramangala", "PlayGround Café", 2, 3, 7, 22),
-    ],
-    columns=["neighbourhood", "place", "emoji_1", "emoji_2", "emoji_3", "emoji_4"],
-)
+2. User Ratings per Place
+Country City
+  Neighbourhood
+    Place 1 - Total Emoji Reactions: X, Emoji 4 Reactions (safe): Y
+    Place 2 - ...
+  
+# Features to Implement
 
-VIBE_KEYWORDS: Dict[str, List[str]] = {
-    "Ulsoor": ["crime"],
-    "Indiranagar": ["techies", "expat", "quiet"],
-    "Koramangala": ["students", "party", "nightlife"],
-}
+## Feature 1: Safety Score per Neighbourhood (0.0 to 5.0)
 
-###############################################################################
-# Utility functions
-###############################################################################
+Calculate and output a safety score for each neighbourhood. The score must combine the following three factors:
 
-def load_api_key(env_var: str = API_KEY_ENV) -> str:
-    """Load the NVIDIA API key from `.env` or environment."""
-    load_dotenv(find_dotenv())  # silently peek at nearest .env
-    api_key = os.getenv(env_var)
-    if not api_key:
-        raise RuntimeError(
-            f"Missing environment variable '{env_var}'. "
-            "Create a .env file with your key or export it first."
-        )
-    return api_key
+1. Emoji 4 Ratio: For each place in the neighbourhood, calculate the percentage of emoji 4 (i.e. "felt safe") reactions out of all reactions. Aggregate this for the neighbourhood.
+2. HoodMaps Vibe: Extract keywords from the description. If it includes terms like "crime", "ghetto", or "unsafe", negatively weight the score. If it includes terms like "techies", "families", "quiet", or "expat", weight positively.
+3. News Analysis: Evaluate safety-related news headlines. Headlines indicating increased patrols or community safety actions increase the score slightly. Headlines indicating crime spikes or recent violent events lower the score.
 
+Weighting should prioritize:
+- Emoji data (50%)
+- News (30%)
+- HoodMaps (20%)
 
-def compute_emoji4_ratio(df: pd.DataFrame) -> pd.Series:
-    """Return per‑neighbourhood ratio of emoji_4 to all reactions."""
-    emoji_cols = [c for c in df.columns if c.startswith("emoji_")]
-    df = df.copy()
-    df["total"] = df[emoji_cols].sum(axis=1)
-    df["ratio"] = df["emoji_4"] / df["total"].clip(lower=1)
+Return one float value between 0.0 and 5.0 per neighbourhood.
 
-    weighted_ratios = (
-        df.groupby("neighbourhood")
-        .apply(lambda g: (g["ratio"] * g["total"]).sum() / g["total"].sum())
-    )
-    return weighted_ratios
+## Feature 2: Top 3 Safe Places per Neighbourhood
 
+List the top 3 places in each neighbourhood ranked by the number of emoji 4 reactions (i.e. places users reported feeling safe at). If fewer than 3 places exist, list as many as available.
 
-def top_safe_places(df: pd.DataFrame, *, n: int = 3) -> Dict[str, List[str]]:
-    """Return the top‑`n` places per neighbourhood by emoji_4 count."""
-    out: Dict[str, List[str]] = {}
-    grouped = df.sort_values("emoji_4", ascending=False).groupby("neighbourhood")
-    for nbh, group in grouped:
-        out[nbh] = group.head(n)["place"].tolist()
-    return out
+## Feature 3: Safety Overview per Neighbourhood
 
+For each neighbourhood:
+- Summarize any significant safety-related news (e.g., recent crimes, safety interventions).
+- If HoodMaps mentions terms relevant to safety, include them in the overview (e.g., "known for crime" or "described as quiet and family-friendly").
 
-def build_records(
-    articles: List[Dict[str, Any]],
-    emoji_stats: pd.Series,
-    top_places: Dict[str, List[str]],
-) -> List[Dict[str, Any]]:
-    """Assemble the JSON payload expected by the LLM."""
-    records: List[Dict[str, Any]] = []
-    for row in articles:
-        nbh = row["neighbourhood"]
-        records.append(
-            {
-                "neighbourhood": nbh,
-                "emoji4_ratio": round(float(emoji_stats.get(nbh, 0)), 4),
-                "vibe_keywords": VIBE_KEYWORDS.get(nbh, []),
-                "news": row["news"],
-                "top_places_counts": [
-                    {
-                        "place": place,
-                        "emoji4": int(
-                            EMOJI_TABLE.query(
-                                "neighbourhood == @nbh and place == @place"
-                            )["emoji_4"].iloc[0]
-                        ),
-                    }
-                    for place in top_places.get(nbh, [])
-                ],
-            }
-        )
-    return records
+This output should provide a brief, readable paragraph for each neighbourhood to help digital nomads understand the local safety context.
 
+## Feature 4: Social Character Assessment
 
-def call_llm(client: OpenAI, payload: str) -> str:
-    """Request a chat completion and return its raw text."""
+Describe the general social atmosphere or demographic in each neighbourhood based on the HoodMaps description or other cues. If it contains terms like “techies”, “students”, “party”, “families”, “touristy”, or “gentrified”, output this as a friendly description of what the people or vibe are like.
+
+# Output Format
+
+Return a structured block for each neighbourhood with the following format:
+
+Neighbourhood: <Name>
+Safety Score: <X.Y/5.0>
+Top 3 Safe Places:
+  - <Place 1>
+  - <Place 2>
+  - <Place 3>
+Safety Overview:
+  <Short paragraph summarizing news and HoodMaps safety context>
+Social Character:
+  <What kind of people live or hang out here>
+
+# Example Output
+
+Neighbourhood: Ulsoor
+Safety Score: 3.2/5.0
+Top 3 Safe Places:
+  - Green Bowl Cafe
+  - Lake View Co-working
+  - Blossom Yoga Studio
+Safety Overview:
+  Recent thefts have caused concern in Ulsoor, prompting increased police patrols and community safety meetings. HoodMaps also tags this area as “crime-prone”, which aligns with recent events.
+Social Character:
+  Mixed-use neighbourhood with local residents and some budget travelers.
+
+# Notes
+
+- Your safety assessments should be especially sensitive to the types of threats and discomforts commonly reported by women in unfamiliar areas. However, you must phrase all outputs using gender-neutral language.
+- Only focus on safety, security atmosphere, and demographic vibe. Do not give tourist or entertainment recommendations.
+- Output must be clean and consistent with the format above. Do not include irrelevant commentary."""
+
+    # === Call the LLM ===
     response = client.chat.completions.create(
-        model=MODEL_NAME,
+        model="nvidia/llama-3.3-nemotron-super-49b-v1",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": payload},
+            {"role": "user", "content": formatted_input}
         ],
-        max_tokens=600,
-        temperature=0.4,
+        max_tokens=1000,
+        temperature=0.4
     )
-    return response.choices[0].message.content
 
-###############################################################################
-# Main program
-###############################################################################
+    raw_text = response.choices[0].message.content
 
-def main() -> None:
-    """Entry‑point for CLI usage."""
-    # 1. Prep environment -----------------------------------------------------
-    api_key = load_api_key()
-    client = OpenAI(base_url=API_BASE_URL, api_key=api_key)
-
-    # 2. Compute emoji‑based stats -------------------------------------------
-    emoji_ratio = compute_emoji4_ratio(EMOJI_TABLE)
-    safe_places = top_safe_places(EMOJI_TABLE)
-
-    # 3. Build structured input ----------------------------------------------
-    records = build_records(ARTICLES, emoji_ratio, safe_places)
-    formatted_input = json.dumps(records, ensure_ascii=False, indent=2)
-    print("📤 Sending structured payload to LLM (truncated):")
-    print(textwrap.shorten(formatted_input, 350))
-
-    # 4. Call the LLM ---------------------------------------------------------
-    raw_text = call_llm(client, formatted_input)
-    print("\n🧠 Raw model response (first 400 chars):")
-    print(raw_text[:400], "…\n")
-
-    # 5. Try to parse JSON (defensive) ---------------------------------------
+    # === Extract valid JSON from response ===
     try:
-        result_json = json.loads(raw_text)
-        print("✅ Parsed response:")
-        print(json.dumps(result_json, indent=2, ensure_ascii=False))
-    except json.JSONDecodeError:
-        print("❌ JSON parsing failed — output probably not valid JSON.")
-
-
-###############################################################################
-# Reusable library entry‑point
-###############################################################################
-
-if __name__ == "__main__":
-    main()
+        raw = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.IGNORECASE | re.MULTILINE)
+        match = re.search(r"\[\s*{.*?}\s*]", raw, flags=re.DOTALL)
+        if not match:
+            raise ValueError("No valid JSON block found in model output.")
+        return json.loads(match.group(0))
+    except Exception as e:
+        raise ValueError(f"Model returned invalid JSON: {str(e)}\nRaw response:\n{raw_text}")
