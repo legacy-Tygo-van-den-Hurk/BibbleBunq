@@ -105,90 +105,83 @@ def generate_neighbourhood_safety_json(articles, emoji_table):
     # ------------------------------------------------------------------
     # 5.  SYSTEM PROMPT (kept *exactly* as provided)
     # ------------------------------------------------------------------
-    SYSTEM_PROMPT = """Assess safety and social atmosphere of neighbourhoods for digital nomads based on crowdsourced data, place ratings, and recent news.
+    SYSTEM_PROMPT = """Thought for 7 seconds
 
-Analyze the provided structured data about cities and their neighbourhoods to determine safety levels and provide a localized safety overview. The AI agent is designed to prioritize safety concerns especially relevant to women traveling alone or living abroad. Input includes place-level emoji reaction data, HoodMaps crowdsource descriptors, and neighbourhood-specific news headlines. 
 
-While the safety assessment is tailored to concerns commonly experienced by women (e.g., harassment risk, walkability at night, public transportation safety, and local crime rates), the user of this information may be of any gender. Therefore, all communication and outputs must be phrased in a neutral tone—avoiding gendered language—so it is inclusive and informative to all users.
-# Input Format
+Purpose: Evaluate neighbourhood safety and social atmosphere for digital nomads using crowdsourced data, place‑level emoji reactions, HoodMaps descriptors, and local news.
 
-You will receive structured data in the following format:
+Output Requirement: **Every answer MUST be valid JSON only – no markdown or explanatory text.**
 
-1. Neighbourhood Data
+────────────────────────────────────────
+INPUT STRUCTURE
+
+1. **Neighbourhood Dataset** (JSON array)
+
+```json
 [
-    {
-        "neighbourhood": "Ulsoor",
-        "description": "crime",
-        "news": [
-            "Karnataka Police increase patrols in Ulsoor after spike in thefts",
-            "Community meeting held to discuss safety measures in Ulsoor"
-        ]
-    },
-    {
-        "neighbourhood": "Indiranagar",
-        "description": "techies",
-        "news": [ ... ]
-    }
+  {
+    "neighbourhood": "Ulsoor",
+    "description": "crime",
+    "news": [
+      "Karnataka Police increase patrols in Ulsoor after spike in thefts",
+      "Community meeting held to discuss safety measures in Ulsoor"
+    ]
+  },
+  ...
 ]
+```
 
-2. User Ratings per Place
+2. **User Ratings per Place** (indented text)
+
+```
 Country City
   Neighbourhood
-    Place 1 - Total Emoji Reactions: X, Emoji 4 Reactions (safe): Y
-    Place 2 - ...
-  
-# Features to Implement
+    Place – Total Emoji Reactions: X, Emoji 4 (safe) Reactions: Y
+```
 
-## Feature 1: Safety Score per Neighbourhood (0.0 to 5.0)
+────────────────────────────────────────
+FEATURES TO DELIVER
 
-Calculate and output a safety score for each neighbourhood. The score must combine the following three factors:
+1. **Safety Score (0.0‑5.0 per neighbourhood)**
+   • **Emoji data** (50 % weight): ratio of Emoji 4 to total reactions.
+   • **News** (30 % weight):
+         – Headlines on crime spikes / violence → lower score.
+         – Headlines on patrols / community action → slightly raise score.
+   • **HoodMaps** (20 % weight): keywords such as:
+         – Negative: “crime”, “ghetto”, “unsafe” → lower score.
+         – Positive: “techies”, “families”, “quiet”, “expat” → raise score.
 
-1. Emoji 4 Ratio: For each place in the neighbourhood, calculate the percentage of emoji 4 (i.e. "felt safe") reactions out of all reactions. Aggregate this for the neighbourhood.
-2. HoodMaps Vibe: Extract keywords from the description. If it includes terms like "crime", "ghetto", or "unsafe", negatively weight the score. If it includes terms like "techies", "families", "quiet", or "expat", weight positively.
-3. News Analysis: Evaluate safety-related news headlines. Headlines indicating increased patrols or community safety actions increase the score slightly. Headlines indicating crime spikes or recent violent events lower the score.
+2. **Top 3 Safe Places**
+   Pick up to three places with the highest count of Emoji 4 reactions per neighbourhood.
 
-Weighting should prioritize:
-- Emoji data (50%)
-- News (30%)
-- HoodMaps (20%)
+3. **Safety Overview**
+   Short paragraph that fuses key safety‑related news and relevant HoodMaps safety keywords.
 
-Return one float value between 0.0 and 5.0 per neighbourhood.
+4. **Social Character**
+   Friendly description of the local vibe based on HoodMaps (e.g., “techies”, “students”, “party”, “families”, “touristy”, “gentrified”).
 
-## Feature 2: Top 3 Safe Places per Neighbourhood
+────────────────────────────────────────
+OUTPUT JSON SCHEMA (one object per neighbourhood)
 
-List the top 3 places in each neighbourhood ranked by the number of emoji 4 reactions (i.e. places users reported feeling safe at). If fewer than 3 places exist, list as many as available.
+```json
+{
+  "Neighbourhood": "<Name>",
+  "Safety Score": "<X.Y/5.0>",
+  "Top 3 Safe Places": [
+    "<Place 1>",
+    "<Place 2>",
+    "<Place 3>"
+  ],
+  "Safety Overview": "<Brief paragraph>",
+  "Social Character": "<Vibe description>"
+}
+```
 
-## Feature 3: Safety Overview per Neighbourhood
-
-For each neighbourhood:
-- Summarize any significant safety-related news (e.g., recent crimes, safety interventions).
-- If HoodMaps mentions terms relevant to safety, include them in the overview (e.g., "known for crime" or "described as quiet and family-friendly").
-
-This output should provide a brief, readable paragraph for each neighbourhood to help digital nomads understand the local safety context.
-
-## Feature 4: Social Character Assessment
-
-Describe the general social atmosphere or demographic in each neighbourhood based on the HoodMaps description or other cues. If it contains terms like “techies”, “students”, “party”, “families”, “touristy”, or “gentrified”, output this as a friendly description of what the people or vibe are like.
-
-# Output Format
-
-Return a structured block for each neighbourhood with the following format:
-
-Neighbourhood: <Name>
-Safety Score: <X.Y/5.0>
-Top 3 Safe Places:
-  - <Place 1>
-  - <Place 2>
-  - <Place 3>
-Safety Overview:
-  <Short paragraph summarizing news and HoodMaps safety context>
-Social Character:
-  <What kind of people live or hang out here>
-
-# Notes
-- Phrase outputs in gender-neutral language.
-- Do not include tourist/entertainment recommendations.
-- Output must match the format and remain free of irrelevant commentary."""
+Rules:
+• Use inclusive, gender‑neutral phrasing.
+• Omit tourist/entertainment advice.
+• Provide no extra commentary outside the JSON.
+."""
 
     # ------------------------------------------------------------------
     # 6.  LLM call
@@ -208,9 +201,9 @@ Social Character:
     # ------------------------------------------------------------------
     # 7.  Extract valid JSON block
     # ------------------------------------------------------------------
-    raw = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.IGNORECASE | re.MULTILINE)
-    match = re.search(r"\[\s*{.*?}\s*]", raw, flags=re.DOTALL)
-    if not match:
-        raise ValueError(f"No valid JSON block found. Raw model output:\n{raw_text}")
+    # raw = re.sub(r"^```(?:json)?|```$", "", raw_text.strip(), flags=re.IGNORECASE | re.MULTILINE)
+    # match = re.search(r"\[\s*{.*?}\s*]", raw, flags=re.DOTALL)
+    # if not match:
+    #     raise ValueError(f"No valid JSON block found. Raw model output:\n{raw_text}")
 
-    return json
+    return raw_text

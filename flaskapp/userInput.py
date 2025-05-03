@@ -39,45 +39,34 @@ def generate_synthetic_tourist_data(
             ]
 
             for place in places:
+               # --- inside generate_synthetic_tourist_data ---------------------------------
                 row = {
-                    "City": city,
-                    "Neighborhood": neighborhood,
-                    "Famous Place": place
+                    "city": city,                     # was "City"
+                    "neighbourhood": neighborhood,    # was "Neighborhood"
+                    "place": place                    # was "Famous Place"
                 }
-                for emoji in emojis:
-                    row[f"Emoji {emoji}"] = random.randint(0, 100)
+                for emoji in emojis:                  # 1 … 5
+                    row[f"emoji_{emoji}"] = random.randint(0, 100)   # was f"Emoji {emoji}"
+
                 data.append(row)
 
     df = pd.DataFrame(data)
     return df
 
-if __name__ == "__main__":
-    df = generate_synthetic_tourist_data()
-    print(df.head())
-    print("Total rows:", df.shape[0])
+# if __name__ == "__main__":
+#     df = generate_synthetic_tourist_data()
+#     print(df.head())
+#     print("Total rows:", df.shape[0])
 
 
 
-df['Total Emojis'] = df[['Emoji 1', 'Emoji 2', 'Emoji 3', 'Emoji 4', 'Emoji 5']].sum(axis=1)
+# df['Total Emojis'] = df[['Emoji 1', 'Emoji 2', 'Emoji 3', 'Emoji 4', 'Emoji 5']].sum(axis=1)
 
 
-df_sorted = (
-    df
-    .sort_values(by="Emoji 4", ascending=False)
-    .rename(columns={"Emoji 4": "Safety"})
-)
+# df_sorted = (
+#     df
+#     .sort_values(by="Emoji 4", ascending=False)
+#     .rename(columns={"Emoji 4": "Safety"})
+# )
+# main.py
 
-
-top_emoji4_places = df_sorted.groupby(["City", "Neighborhood"])
-
-
-for (city, neighbourhood), group in top_emoji4_places:
-    print(f"--- {city} | {neighbourhood} ---")
-    print(group[[
-        "City",
-        "Neighborhood",
-        "Famous Place",
-        "Safety",       
-        "Total Emojis"  
-    ]])
-    print()

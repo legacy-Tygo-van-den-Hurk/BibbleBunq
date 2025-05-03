@@ -3,6 +3,8 @@
 import requests
 from flask import Flask, jsonify, request
 from city_processor import process_city_data
+from userInput import generate_synthetic_tourist_data
+from something import generate_neighbourhood_safety_json
 
 app = Flask(__name__)
 
@@ -24,12 +26,24 @@ def process_city():
     if not city:
         return jsonify({"error": "City parameter is required!"}), 400
 
-    # Step 1: gets data about the city
-    
+    # Step 1: Process the city data using the Langchain agent
     city = city.lower()
     processed_data = process_city_data(city)
 
     json_str = json.dumps(processed_data, indent=4)
+    df = generate_synthetic_tourist_data()
+    df_str = df.to_string(index=False)
+
+    articles       = []          # List[dict]
+    emoji_table    = df       # pandas DataFrame
+    vibe_keywords  = processed_data        # Dict[str, List[str]]
+
+    final_json = generate_neighbourhood_safety_json(
+          vibe_keywords, emoji_table
+    )
+
+    print(f"Processed data: {final_json}")
+
 
     # Step 2: Send the processed data to an external API via POST request
     external_response = send_to_external_api(processed_data)
