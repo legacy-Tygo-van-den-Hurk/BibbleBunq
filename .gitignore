@@ -1,0 +1,7 @@
+
+# Don't commit your secrets...
+**/.env
+
+# it's bad practice to commit these to the repo.
+**/__pycache__
+
